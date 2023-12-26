@@ -145,7 +145,7 @@ impl Alive {
         })
     }
 
-    fn iter<N, I, II>(&self, n: N) -> AliveIter<I, II>
+    pub fn iter<N, I, II>(&self, n: N) -> AliveIter<I, II>
     where
         N: IntoIterator<Item = I, IntoIter = II>,
         II: Iterator<Item = I>,
