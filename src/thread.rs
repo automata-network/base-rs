@@ -1,7 +1,12 @@
 use std::prelude::v1::*;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
+use std::sync::Arc;
+
+use crate::channel::Dispatcher;
+use crate::trace::Alive;
 
 pub fn spawn<F, T>(name: String, f: F) -> thread::JoinHandle<T>
 where
@@ -26,6 +31,13 @@ pub fn join<T>(handle: &mut Option<thread::JoinHandle<T>>) {
     });
 }
 
+pub struct DeferFunc<F: Fn()>(F);
+impl<F: Fn()> Drop for DeferFunc<F> {
+    fn drop(&mut self) {
+        self.0();
+    }
+}
+
 #[derive(Debug)]
 pub struct PanicContext<T: std::fmt::Debug>(pub T);
 
@@ -34,5 +46,53 @@ impl<T: std::fmt::Debug> Drop for PanicContext<T> {
         if thread::panicking() {
             glog::warn!("panicking context: {:?}", self.0)
         }
+    }
+}
+
+pub fn parallel<T, F>(alive: &Alive, tasks: Vec<T>, worker: usize, f: F)
+where
+    T: Send + 'static + Clone,
+    F: Fn(T) -> Result<(), String> + Send + 'static + Clone,
+{
+    let alive = alive.fork();
+    let dispatcher = <Dispatcher<T>>::new();
+    let mut handles = Vec::with_capacity(worker);
+    let processed = Arc::new(AtomicUsize::new(0));
+    for i in 0..worker {
+        let handle = spawn(format!("parallel-worker-{}", i), {
+            let handler = f.clone();
+            let receiver = dispatcher.subscribe();
+            let alive = alive.clone();
+            let processed = processed.clone();
+            move || {
+                let _defer = DeferFunc(|| alive.shutdown());
+                for item in alive.recv_iter(&receiver, Duration::from_millis(100)) {
+                    if let Err(err) = handler(item) {
+                        alive.shutdown();
+                    }
+                    processed.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+        handles.push(handle);
+    }
+    for task in alive.iter(tasks) {
+        let mut result = dispatcher.dispatch(task);
+        while true {
+            match result {
+                Some(task) => {
+                    if !alive.sleep_ms(100) {
+                        break;
+                    }
+                    result = dispatcher.dispatch(task);
+                }
+                None => {
+                    break;
+                }
+            }
+        }
+    }
+    for handle in handles {
+        handle.join();
     }
 }
