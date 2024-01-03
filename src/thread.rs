@@ -92,6 +92,7 @@ where
             }
         }
     }
+    alive.shutdown();
     for handle in handles {
         handle.join();
     }
