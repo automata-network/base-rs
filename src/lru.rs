@@ -81,9 +81,6 @@ where
                 self.order.insert(self.seq, k);
             }
         };
-        if self.order.len() % 10000 == 0 {
-            glog::info!("lru tree len: {}", self.order.len());
-        }
         let mut out_val = None;
         while self.order.len() > self.limit {
             let n = self.order.iter().next().unwrap();
