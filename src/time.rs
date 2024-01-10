@@ -1,4 +1,7 @@
-use core::{ops::{Add, Sub}, cmp::Ordering};
+use core::{
+    cmp::Ordering,
+    ops::{Add, Sub},
+};
 use std::prelude::v1::*;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -62,7 +65,6 @@ impl PartialEq<Duration> for SignedDuration {
     }
 }
 
-
 impl std::fmt::Debug for SignedDuration {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}{:?}", if self.is_neg { "-" } else { "" }, self.dur)
@@ -74,7 +76,7 @@ pub struct Date(DateTime<Utc>);
 impl From<Duration> for Date {
     fn from(du: Duration) -> Self {
         let nano = du.subsec_nanos() / 1_000_000 * 1_000_000;
-        Self(DateTime::<Utc>::from_utc(
+        Self(DateTime::<Utc>::from_naive_utc_and_offset(
             NaiveDateTime::from_timestamp_opt(du.as_secs() as i64, nano).unwrap(),
             Utc,
         ))
