@@ -1,9 +1,9 @@
 use std::prelude::v1::*;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use std::sync::Arc;
 
 use crate::channel::Dispatcher;
 use crate::trace::Alive;
@@ -49,9 +49,9 @@ impl<T: std::fmt::Debug> Drop for PanicContext<T> {
     }
 }
 
-pub fn parallel<T, F>(alive: &Alive, tasks: Vec<T>, worker: usize, f: F)
+pub fn parallel<T, F>(alive: &Alive, tasks: Vec<T>, worker: usize, f: F) -> usize
 where
-    T: Send + 'static + Clone,
+    T: Send + 'static + Clone + std::fmt::Debug,
     F: Fn(T) -> Result<(), String> + Send + 'static + Clone,
 {
     let alive = alive.fork();
@@ -65,9 +65,14 @@ where
             let alive = alive.clone();
             let processed = processed.clone();
             move || {
-                let _defer = DeferFunc(|| alive.shutdown());
+                let _defer = DeferFunc(|| {
+                    if thread::panicking() {
+                        alive.shutdown()
+                    }
+                });
                 for item in alive.recv_iter(&receiver, Duration::from_millis(100)) {
-                    if let Err(err) = handler(item) {
+                    if let Err(err) = handler(item.clone()) {
+                        glog::error!("parallel execution fail: task:{:?}, info: {}", item, err);
                         alive.shutdown();
                     }
                     processed.fetch_add(1, Ordering::SeqCst);
@@ -77,8 +82,8 @@ where
         handles.push(handle);
     }
     for task in alive.iter(tasks) {
-        let mut result = dispatcher.dispatch(task);
-        while true {
+        let mut result = dispatcher.dispatch(task.clone());
+        loop {
             match result {
                 Some(task) => {
                     if !alive.sleep_ms(100) {
@@ -86,14 +91,13 @@ where
                     }
                     result = dispatcher.dispatch(task);
                 }
-                None => {
-                    break;
-                }
+                None => break,
             }
         }
     }
-    alive.shutdown();
+    dispatcher.close_write();
     for handle in handles {
-        handle.join();
+        let _ = handle.join();
     }
+    return processed.load(Ordering::SeqCst);
 }

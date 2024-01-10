@@ -96,6 +96,11 @@ impl<T> Dispatcher<T> {
         Some(t)
     }
 
+    pub fn close_write(&self) {
+        let mut senders = self.senders.lock().unwrap();
+        *senders = Vec::new();
+    }
+
     pub fn subscribe(&self) -> mpsc::Receiver<T> {
         let (sender, receiver) = mpsc::sync_channel(1);
         self.senders.lock().unwrap().push(sender);
