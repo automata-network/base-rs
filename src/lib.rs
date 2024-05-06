@@ -12,3 +12,4 @@ pub mod serde;
 pub mod trace;
 pub mod channel;
 pub mod fs;
+pub mod errors;
