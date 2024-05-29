@@ -74,8 +74,9 @@ where
                     if let Err(err) = handler(item.clone()) {
                         glog::error!("parallel execution fail: task:{:?}, info: {}", item, err);
                         alive.shutdown();
+                    } else {
+                        processed.fetch_add(1, Ordering::SeqCst);
                     }
-                    processed.fetch_add(1, Ordering::SeqCst);
                 }
             }
         });
