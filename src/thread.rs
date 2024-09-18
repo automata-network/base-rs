@@ -2,7 +2,7 @@ use std::{future::Future, sync::Arc};
 
 use tokio::{runtime::Builder, sync::Semaphore};
 
-use crate::alive::Alive;
+use crate::trace::Alive;
 
 pub async fn parallel<O, T, C, A, F, E>(
     _alive: &Alive,
