@@ -11,6 +11,7 @@ macro_rules! stack_error {
         }
     ) => {
         $crate::stack_error! {
+            #[derive(Debug)]
             name: $name,
             stack_name: $stack_ty_name,
             error: {
@@ -24,6 +25,7 @@ macro_rules! stack_error {
         }
     };
     (
+        $(#[derive($($derive:ident),*)])*
         name: $name:ident,
         stack_name: $stack_ty_name:ident,
         error: {
@@ -36,7 +38,9 @@ macro_rules! stack_error {
             $($stack_name:ident( $($stack_field:ident : $stack_field_type:ty),* ),)*
         }
     ) => {
-        #[derive(Debug)]
+        $(
+            #[derive($($derive),*)]
+        )*
         pub enum $name {
             $(
                 $err_name $(
