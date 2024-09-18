@@ -1,71 +1,12 @@
-use std::prelude::v1::*;
+use std::ops::DerefMut;
 
-use std::sync::mpsc::TrySendError;
-use std::sync::{mpsc, Arc, Mutex};
-
-#[derive(Clone, Debug)]
-pub struct Boardcast<T: Clone> {
-    senders: Arc<Mutex<Vec<mpsc::Sender<T>>>>,
-    latest: Arc<Mutex<Option<T>>>,
-}
-
-impl<T: Clone> Boardcast<T> {
-    pub fn new() -> Self {
-        Self {
-            senders: Default::default(),
-            latest: Default::default(),
-        }
-    }
-
-    pub fn new_with(t: T) -> Self {
-        let bcast = Self::new();
-        bcast.boardcast(t);
-        bcast
-    }
-
-    pub fn new_subscriber(&self) -> mpsc::Receiver<T> {
-        let mut senders = self.senders.lock().unwrap();
-        let (sender, receiver) = mpsc::channel();
-        senders.push(sender);
-        receiver
-    }
-
-    pub fn get_latest(&self) -> Option<T> {
-        let latest = self.latest.lock().unwrap();
-        latest.as_ref().map(|item| item.clone())
-    }
-
-    pub fn len(&self) -> usize {
-        self.senders.lock().unwrap().len()
-    }
-
-    pub fn boardcast(&self, item: T) {
-        {
-            let mut senders = self.senders.lock().unwrap();
-            let mut idx = 0;
-            while idx < senders.len() {
-                if let Err(_) = senders[idx].send(item.clone()) {
-                    senders.remove(idx);
-                    continue;
-                }
-                idx += 1;
-            }
-        }
-        {
-            let mut latest = self.latest.lock().unwrap();
-            *latest = Some(item.clone());
-        }
-    }
-
-    pub fn clean(&self) {
-        let mut senders = self.senders.lock().unwrap();
-        let mut tmp = Vec::new();
-        std::mem::swap(&mut tmp, &mut senders);
-    }
-}
+use tokio::sync::{
+    mpsc::{self, error::TrySendError},
+    Mutex,
+};
 
 pub struct Dispatcher<T> {
-    senders: Mutex<Vec<mpsc::SyncSender<T>>>,
+    senders: Mutex<Vec<mpsc::Sender<T>>>,
 }
 
 impl<T> Dispatcher<T> {
@@ -75,8 +16,8 @@ impl<T> Dispatcher<T> {
         }
     }
 
-    pub fn dispatch(&self, mut t: T) -> Option<T> {
-        let mut senders = self.senders.lock().unwrap();
+    pub async fn dispatch(&self, mut t: T) -> Option<T> {
+        let mut senders = self.senders.lock().await;
         let mut idx = 0;
         while idx < senders.len() {
             match senders[idx].try_send(t) {
@@ -87,7 +28,7 @@ impl<T> Dispatcher<T> {
                     t = obj;
                     idx += 1;
                 }
-                Err(TrySendError::Disconnected(obj)) => {
+                Err(TrySendError::Closed(obj)) => {
                     t = obj;
                     senders.remove(idx);
                 }
@@ -96,14 +37,14 @@ impl<T> Dispatcher<T> {
         Some(t)
     }
 
-    pub fn close_write(&self) {
-        let mut senders = self.senders.lock().unwrap();
-        *senders = Vec::new();
+    pub async fn close_write(&self) {
+        let mut senders = self.senders.lock().await;
+        std::mem::take(senders.deref_mut());
     }
 
-    pub fn subscribe(&self) -> mpsc::Receiver<T> {
-        let (sender, receiver) = mpsc::sync_channel(1);
-        self.senders.lock().unwrap().push(sender);
+    pub async fn subscribe(&self) -> mpsc::Receiver<T> {
+        let (sender, receiver) = mpsc::channel(1);
+        self.senders.lock().await.push(sender);
         receiver
     }
 }
