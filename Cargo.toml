@@ -8,3 +8,7 @@ license = "Apache-2.0"
 [dependencies]
 chrono = "0.4.38"
 tokio = { version = "1.0", features = ["time", "macros", "rt-multi-thread", "sync"] }
+
+# eth
+alloy = { version = "0.2", default-features = false, features = ["signer-local", "rpc-types-eth", "sol-types", "providers", "std", "reqwest-rustls-tls", "json-rpc"] }
+url = "2.5.0"
