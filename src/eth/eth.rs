@@ -21,6 +21,7 @@ use alloy::{
 };
 
 crate::stack_error! {
+    #[derive(Debug)]
     name: EthError,
     stack_name: EthErrorStack,
     error: {},
