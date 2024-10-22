@@ -1,4 +1,4 @@
-use std::{future::Future, sync::Arc};
+use std::{future::{Future, IntoFuture}, sync::Arc, time::Duration};
 
 use tokio::{runtime::Builder, sync::Semaphore};
 
@@ -49,4 +49,11 @@ where
     }
     rt.shutdown_background();
     return Ok(out);
+}
+
+pub fn timeout<F>(duration: Duration, future: F) -> tokio::time::Timeout<F::IntoFuture>
+where
+    F: IntoFuture,
+{
+    tokio::time::timeout(duration, future)
 }
