@@ -1,4 +1,8 @@
-use std::{future::{Future, IntoFuture}, sync::Arc, time::Duration};
+use std::{
+    future::{Future, IntoFuture},
+    sync::Arc,
+    time::Duration,
+};
 
 use tokio::{runtime::Builder, sync::Semaphore};
 
@@ -43,17 +47,43 @@ where
             Ok(n) => out.push(n),
             Err(err) => {
                 rt.shutdown_background();
-                return Err(err)
-            },
+                return Err(err);
+            }
         }
     }
     rt.shutdown_background();
     return Ok(out);
 }
 
-pub fn timeout<F>(duration: Duration, future: F) -> tokio::time::Timeout<F::IntoFuture>
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimeoutError;
+
+pub async fn wait_timeout<F>(
+    duration: Option<Duration>,
+    future: F,
+) -> Result<F::Output, TimeoutError>
 where
     F: IntoFuture,
 {
-    tokio::time::timeout(duration, future)
+    match duration {
+        Some(du) => match tokio::time::timeout(du, future).await {
+            Ok(n) => Ok(n),
+            Err(_) => Err(TimeoutError),
+        },
+        None => Ok(future.await),
+    }
+}
+
+pub async fn wait_result<F, T, E>(
+    duration: Option<Duration>,
+    future: F,
+) -> Result<T, E>
+where
+    F: IntoFuture<Output = Result<T, E>>,
+    E: From<TimeoutError>,
+{
+    match wait_timeout(duration, future).await {
+        Ok(result) => result,
+        Err(err) => Err(err.into())
+    }
 }

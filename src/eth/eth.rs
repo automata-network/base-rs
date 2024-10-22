@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, sync::Arc, time::Duration};
 
 use alloy::{
     eips::BlockId,
@@ -20,16 +20,19 @@ use alloy::{
     },
 };
 
+use crate::thread::{wait_timeout, TimeoutError};
+
 crate::stack_error! {
     #[derive(Debug)]
     name: EthError,
     stack_name: EthErrorStack,
     error: {},
     wrap: {
-        Signer(LocalSignerError ),
+        Signer(LocalSignerError),
         Url(url::ParseError),
-        Rpc ( RpcError<TransportErrorKind>),
+        Rpc(RpcError<TransportErrorKind>),
         Type(alloy::sol_types::Error),
+        Timeout(TimeoutError),
     },
     stack: {
         OnTransact(contract: Address, sig: &'static str),
@@ -37,6 +40,7 @@ crate::stack_error! {
         OnDecodeReturn(contract: Address, sig: &'static str, data: Bytes),
         BatchRequestSerFail(),
         BatchRequestDerRespFail(),
+        BatchRequestWait(),
         BatchSend(),
     }
 }
@@ -63,6 +67,7 @@ impl EthError {
 #[derive(Clone)]
 pub struct Eth {
     client: Arc<Box<dyn Provider<Http<Client>>>>,
+    call_timeout: Option<Duration>,
 }
 
 impl Eth {
@@ -87,7 +92,13 @@ impl Eth {
 
         Ok(Eth {
             client: Arc::new(provider),
+            call_timeout: None,
         })
+    }
+
+    pub fn with_call_timeout(&mut self, call_timeout: Option<Duration>) -> &mut Self {
+        self.call_timeout = call_timeout;
+        self
     }
 
     pub async fn transact<T: SolCall>(
@@ -110,10 +121,9 @@ impl Eth {
         call: &T,
     ) -> Result<T::Return, EthError> {
         let tx = TransactionRequest::default().with_call(call).to(contract);
-        let result = self
-            .client
-            .call(&tx)
+        let result = crate::thread::wait_timeout(self.call_timeout, self.client.call(&tx))
             .await
+            .map_err(EthError::OnCall(&contract, &T::SIGNATURE))?
             .map_err(EthError::OnCall(&contract, &T::SIGNATURE))?;
         let result = T::abi_decode_returns(&result, true).map_err(EthError::OnDecodeReturn(
             &contract,
@@ -167,9 +177,16 @@ impl Eth {
         }
         batch.send().await.map_err(EthError::BatchSend())?;
         let mut out = Vec::new();
-        for (_params, waiter) in waiters {
-            out.push(waiter.await.map_err(EthError::BatchRequestDerRespFail())?);
-        }
+        wait_timeout(self.call_timeout, async {
+            for (_params, waiter) in waiters {
+                out.push(waiter.await.map_err(EthError::BatchRequestDerRespFail())?);
+            }
+            Ok::<(), EthError>(())
+        })
+        .await
+        .map_err(EthError::BatchRequestWait())?
+        .map_err(EthError::BatchRequestWait())?;
+
         Ok(out)
     }
 }
