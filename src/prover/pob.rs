@@ -192,7 +192,7 @@ impl SuccinctPobList {
         let mut si = StringInterning::new();
         let hash = keccak_encode(|hash| {
             for item in list {
-                hash(item.hash.as_slice());
+                hash(item.pob_hash().as_slice());
             }
         });
         let mut pob_list = Vec::with_capacity(list.len());
