@@ -159,6 +159,22 @@ impl Eth {
         tx
     }
 
+    pub async fn batch_request_chunks<Params: RpcParam + std::fmt::Debug, Resp: RpcReturn>(
+        &self,
+        method: impl Into<Cow<'static, str>>,
+        params: &[Params],
+        chunk_size: usize,
+    ) -> Result<Vec<Resp>, EthError> {
+        let params_chunks = params.chunks(chunk_size);
+        let mut out = Vec::with_capacity(params.len());
+        let method = method.into();
+        for p in params_chunks {
+            let resp: Vec<Resp> = self.batch_request(method.clone(), p).await?;
+            out.extend(resp);
+        }
+        Ok(out)
+    }
+
     pub async fn batch_request<Params: RpcParam + std::fmt::Debug, Resp: RpcReturn>(
         &self,
         method: impl Into<Cow<'static, str>>,
