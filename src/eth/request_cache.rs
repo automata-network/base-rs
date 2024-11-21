@@ -23,9 +23,7 @@ impl RequestCache {
 
     fn get_key(&self, key: &[u8]) -> PathBuf {
         let key = keccak256(&key);
-        let fp = self
-            .base_path
-            .join(self.base_path.join(format!("{}.cache", key)));
+        let fp = self.base_path.join(format!("{}.cache", key));
         fp
     }
 
