@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc, time::Duration};
+use std::{borrow::Cow, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy::{
     eips::BlockId,
@@ -19,8 +19,11 @@ use alloy::{
         RpcError, TransportErrorKind,
     },
 };
+use serde::{de::DeserializeOwned, Serialize};
 
 use crate::thread::{wait_timeout, TimeoutError};
+
+use super::RequestCache;
 
 crate::stack_error! {
     #[derive(Debug)]
@@ -30,6 +33,7 @@ crate::stack_error! {
     wrap: {
         Signer(LocalSignerError),
         Url(url::ParseError),
+        Json(serde_json::Error),
         Rpc(RpcError<TransportErrorKind>),
         Type(alloy::sol_types::Error),
         Timeout(TimeoutError),
@@ -38,9 +42,11 @@ crate::stack_error! {
         OnTransact(contract: Address, sig: &'static str),
         OnCall(contract: Address, sig: &'static str),
         OnDecodeReturn(contract: Address, sig: &'static str, data: Bytes),
+        Request(method: Cow<'static, str>),
         BatchRequestSerFail(),
         BatchRequestDerRespFail(),
         BatchRequestWait(),
+        WaitResponse(),
         BatchSend(),
     }
 }
@@ -66,6 +72,7 @@ impl EthError {
 
 #[derive(Clone)]
 pub struct Eth {
+    cache: Option<RequestCache>,
     client: Arc<Box<dyn Provider<Http<Client>>>>,
     call_timeout: Option<Duration>,
 }
@@ -93,7 +100,13 @@ impl Eth {
         Ok(Eth {
             client: Arc::new(provider),
             call_timeout: None,
+            cache: None,
         })
+    }
+
+    pub fn with_cache(&mut self, base_path: PathBuf) -> &mut Self {
+        self.cache = Some(RequestCache::new(base_path));
+        self
     }
 
     pub fn with_call_timeout(&mut self, call_timeout: Option<Duration>) -> &mut Self {
@@ -159,7 +172,67 @@ impl Eth {
         tx
     }
 
-    pub async fn batch_request_chunks<Params: RpcParam + std::fmt::Debug, Resp: RpcReturn>(
+    pub async fn request<Params, Resp>(
+        &self,
+        method: impl Into<Cow<'static, str>>,
+        params: Params,
+    ) -> Result<Resp, EthError>
+    where
+        Params: Serialize + Clone + std::fmt::Debug + Send + Sync + Unpin,
+        Resp: Serialize + DeserializeOwned + std::fmt::Debug + Send + Sync + Unpin + 'static,
+    {
+        wait_timeout(self.call_timeout, self.inner_request(method, params))
+            .await
+            .map_err(EthError::WaitResponse())?
+    }
+
+    async fn inner_request<Params, Resp>(
+        &self,
+        method: impl Into<Cow<'static, str>>,
+        params: Params,
+    ) -> Result<Resp, EthError>
+    where
+        Params: Serialize + Clone + std::fmt::Debug + Send + Sync + Unpin,
+        Resp: Serialize + DeserializeOwned + std::fmt::Debug + Send + Sync + Unpin + 'static,
+    {
+        let method = method.into();
+        match &self.cache {
+            Some(cache) => {
+                let key = cache.json_key((&method, &params));
+                cache
+                    .json(&key, self.client().request(method.clone(), params))
+                    .await
+                    .map_err(EthError::Request(&method))
+            }
+            None => self
+                .client()
+                .request(method.clone(), params)
+                .await
+                .map_err(EthError::Request(&method)),
+        }
+    }
+
+    pub async fn batch_request_chunks<
+        Params: RpcParam + std::fmt::Debug,
+        Resp: RpcReturn + Serialize,
+    >(
+        &self,
+        method: impl Into<Cow<'static, str>>,
+        params: &[Params],
+        chunk_size: usize,
+    ) -> Result<Vec<Resp>, EthError> {
+        wait_timeout(
+            self.call_timeout,
+            self.inner_batch_request_chunks(method, params, chunk_size),
+        )
+        .await
+        .map_err(EthError::WaitResponse())?
+    }
+
+    async fn inner_batch_request_chunks<
+        Params: RpcParam + std::fmt::Debug,
+        Resp: RpcReturn + Serialize,
+    >(
         &self,
         method: impl Into<Cow<'static, str>>,
         params: &[Params],
@@ -175,7 +248,20 @@ impl Eth {
         Ok(out)
     }
 
-    pub async fn batch_request<Params: RpcParam + std::fmt::Debug, Resp: RpcReturn>(
+    pub async fn batch_request<Params: RpcParam + std::fmt::Debug, Resp: RpcReturn + Serialize>(
+        &self,
+        method: impl Into<Cow<'static, str>>,
+        params: &[Params],
+    ) -> Result<Vec<Resp>, EthError> {
+        wait_timeout(self.call_timeout, self.inner_batch_request(method, params))
+            .await
+            .map_err(EthError::WaitResponse())?
+    }
+
+    async fn inner_batch_request<
+        Params: RpcParam + std::fmt::Debug,
+        Resp: RpcReturn + Serialize,
+    >(
         &self,
         method: impl Into<Cow<'static, str>>,
         params: &[Params],
@@ -183,26 +269,43 @@ impl Eth {
         let method: Cow<'static, str> = method.into();
         let mut batch = BatchRequest::new(self.client());
         let mut waiters = Vec::new();
-        for param in params {
+        let mut cached_result: Vec<Option<Resp>> = match &self.cache {
+            Some(cache) => cache
+                .batch_json(params.iter().map(|p| (method.clone(), p)))
+                .map_err(EthError::BatchRequestDerRespFail())?,
+            None => params.iter().map(|_| None).collect(),
+        };
+        for (idx, param) in params.into_iter().enumerate() {
+            if cached_result[idx].is_some() {
+                continue;
+            }
             waiters.push((
                 param,
+                idx,
                 batch
                     .add_call::<_, Resp>(method.clone(), param)
                     .map_err(EthError::BatchRequestSerFail())?,
             ));
         }
-        batch.send().await.map_err(EthError::BatchSend())?;
-        let mut out = Vec::new();
-        wait_timeout(self.call_timeout, async {
-            for (_params, waiter) in waiters {
-                out.push(waiter.await.map_err(EthError::BatchRequestDerRespFail())?);
-            }
-            Ok::<(), EthError>(())
-        })
-        .await
-        .map_err(EthError::BatchRequestWait())?
-        .map_err(EthError::BatchRequestWait())?;
 
-        Ok(out)
+        if waiters.len() > 0 {
+            batch.send().await.map_err(EthError::BatchSend())?;
+            wait_timeout(self.call_timeout, async {
+                for (p, idx, waiter) in waiters {
+                    let result = waiter.await.map_err(EthError::BatchRequestDerRespFail())?;
+                    if let Some(cache) = &self.cache {
+                        let key = cache.json_key((method.clone(), p));
+                        cache.save_json(&key, &result).unwrap();
+                    }
+                    cached_result[idx] = Some(result);
+                }
+                Ok::<(), EthError>(())
+            })
+            .await
+            .map_err(EthError::BatchRequestWait())?
+            .map_err(EthError::BatchRequestWait())?;
+        }
+
+        Ok(cached_result.into_iter().map(|n| n.unwrap()).collect())
     }
 }
