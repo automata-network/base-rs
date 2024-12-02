@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! stack_error {
     (
-        name: $name:ident,
+        name: $name:ident $(<$generic:ident>)?,
         stack_name: $stack_ty_name:ident,
         error: {
             $($err_name:ident $(($($err_tuple:ty),*))? $( { $($err_field:ident : $err_field_type:ty),* } )? ),* $(,)*
@@ -12,7 +12,7 @@ macro_rules! stack_error {
     ) => {
         $crate::stack_error! {
             #[derive(Debug)]
-            name: $name,
+            name: $name $(<$generic>)?,
             stack_name: $stack_ty_name,
             error: {
                 $($err_name $(($($err_tuple),*))? $( { $($err_field : $err_field_type),* } )? ),* ,
@@ -26,7 +26,7 @@ macro_rules! stack_error {
     };
     (
         $(#[derive($($derive:ident),*)])*
-        name: $name:ident,
+        name: $name:ident $(<$generic:ident>)?,
         stack_name: $stack_ty_name:ident,
         error: {
             $($err_name:ident $(($($err_tuple:ty),*))? $( { $($err_field:ident : $err_field_type:ty),* } )? ),* $(,)*
@@ -41,7 +41,7 @@ macro_rules! stack_error {
         $(
             #[derive($($derive),*)]
         )*
-        pub enum $name {
+        pub enum $name $(<$generic>)? {
             $(
                 $err_name $(
                     ($($err_tuple),*)
@@ -52,7 +52,7 @@ macro_rules! stack_error {
             $(
                 $wrap_name $(($wrap_ty))? $((#[doc = stringify!($wrap_str_ty)] String))?,
             )*
-            Stack { origin: Box<$name>, stack: Vec<$stack_ty_name> },
+            Stack { origin: Box<$name $(<$generic>)?>, stack: Vec<$stack_ty_name> },
         }
 
         #[derive(Debug, PartialEq, Clone)]
@@ -81,7 +81,7 @@ macro_rules! stack_error {
             )?
         )*
 
-        impl $name {
+        impl $(<$generic>)? $name $(<$generic>)? {
             $(
             #[allow(non_snake_case)]
             pub fn $stack_name<'a, T>($($stack_field : &'a $stack_field_type),*) -> Box<dyn FnOnce(T) -> Self + 'a> 
