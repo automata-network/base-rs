@@ -1,5 +1,6 @@
 use std::io::{Error, ErrorKind, Write};
 
+#[cfg(feature = "alloy")]
 use alloy::primitives::{B256, U256};
 
 #[derive(Debug)]
@@ -13,6 +14,7 @@ pub trait BufferWriteBytes<T> {
     fn read_bytes(&mut self) -> Option<T>;
 }
 
+#[cfg(feature = "alloy")]
 impl BufferWriteBytes<B256> for BufferVec {
     fn write_bytes(&mut self, n: &B256) -> &mut Self {
         self.copy_from(n.as_ref());
@@ -31,6 +33,7 @@ pub trait BufferBeEncode<T> {
     fn read_be(&mut self) -> Option<T>;
 }
 
+#[cfg(feature = "alloy")]
 impl BufferBeEncode<U256> for BufferVec {
     fn write_be(&mut self, n: &U256) -> &mut Self {
         let n = n.to_be_bytes::<32>();

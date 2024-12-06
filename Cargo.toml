@@ -8,6 +8,8 @@ license = "Apache-2.0"
 [features]
 
 prover = ["dep:libflate"]
+eth = ["alloy"]
+alloy = ["dep:alloy"]
 
 [dependencies]
 chrono = "0.4.38"
@@ -15,10 +17,12 @@ tokio = { version = "1.0", features = ["time", "macros", "rt-multi-thread", "syn
 async-trait = "0.1"
 
 # eth
-alloy = { version = "0.2", default-features = false, features = ["signer-local", "rpc-types-eth", "sol-types", "providers", "std", "reqwest-rustls-tls", "json-rpc"] }
+alloy = { optional = true, version = "0.2", default-features = false, features = ["signer-local", "rpc-types-eth", "sol-types", "providers", "std", "reqwest-rustls-tls", "json-rpc"] }
 url = "2.5.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
-libflate = { version = "2.1.0", optional = true }
 secp256k1 = { version = "0.29.1", features = ["serde", "rand", "recovery", "global-context"] }
 log = { version = "0.4" }
+
+
+libflate = { version = "2.1.0", optional = true }
